@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "compute-output-0.1.0",
+  "title": "Compute IBB - standardized output contract",
+  "type": "object",
+  "required": ["requestId", "executionId", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string" },
+    "executionId": { "type": "string" },
+    "status": {
+      "description": "Shared status vocabulary across every IBB.",
+      "enum": [
+        "accepted",
+        "validating",
+        "waiting",
+        "executing",
+        "verifying",
+        "completed",
+        "rejected",
+        "failed",
+        "partially completed",
+        "cancelled"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "description": "Present when status is completed or partially completed.",
+      "properties": {
+        "resourceId": { "type": "string" },
+        "operationalState": { "type": "string" },
+        "privateIpAddress": { "type": "string", "description": "Private IP address assigned to the instance's primary network interface." },
+        "publicIpAddress": { "type": "string", "description": "Public IP address assigned to the instance, when publicIpEnabled was requested." },
+        "availabilityZone": { "type": "string", "description": "Provider-specific availability zone the instance was placed into." }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Never contains secrets.",
+      "properties": {
+        "deploymentRecord": { "type": "string" },
+        "complianceResult": { "enum": ["passed", "failed", "not-applicable"] },
+        "evidenceLocation": { "type": "string" }
+      }
+    },
+    "error": { "$ref": "ibb-error-0.1.0.schema.json" }
+  }
+}

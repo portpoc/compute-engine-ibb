@@ -1,0 +1,18 @@
+{
+  "request": {
+    "operation": "update",
+    "requestId": "req-test-0002"
+  },
+  "context": {
+    "requesterIdentity": "svc-test-caller",
+    "correlationId": "corr-test-0002",
+    "buildingBlockVersion": "0.1.0",
+    "resourceId": "i-0123456789abcdef0",
+    "platform": "aws"
+  },
+  "parameters": {
+    "sizing": {
+      "computeSize": "t3.large"
+    }
+  }
+}

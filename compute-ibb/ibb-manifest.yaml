@@ -1,0 +1,59 @@
+apiVersion: infrastructure.dsv/v1
+kind: InfrastructureBuildingBlock
+
+metadata:
+  name: compute
+  version: 0.1.0
+  owner: platform-engineering
+  status: draft # draft -> in-review -> approved
+  support: "#platform-support"
+
+# The agnostic contract consumers code against
+contract:
+  interface:
+    type: pipeline
+    implementation: github-actions
+  operations:
+    - validate
+    - create
+    - update
+    - delete
+  schemas:
+    input: schemas/compute-input-0.1.0.schema.json
+    output: schemas/compute-output-0.1.0.schema.json
+    error: schemas/ibb-error-0.1.0.schema.json
+  execution:
+    asynchronous: false
+    idempotencyKey: request.requestId
+
+# An IBB version pins an exact, tested combination of all four components, per supported deployment context.
+implementations:
+  aws:
+    referenceDesign: technical-reference-designs/aws/technical-reference-design-0.1.0.md
+    securityBlueprint: security-blueprints/aws/security-blueprint-0.1.0.md
+    iac: iac/0.1.0/aws
+    version: 0.1.0
+    pipeline: pipelines/github-actions/compute-0.1.0.yml
+    policy: policies/aws/aws-compute-0.1.0.rego
+
+# Every dependency on another capability is declared explicitly; consumers never orchestrate an IBB's internal dependencies.
+dependencies: []
+
+# Maps agnostic properties to the provider. Nested by the same fixed high-level categories as
+# <category>.<property> in the input schema (requirementMapping.<platform>.<category>.<property>),
+# so the translation table's shape mirrors the request it's translating.
+requirementMapping:
+  aws:
+    sizing:
+      computeSize: instance_type
+      diskSizeGiB: root_block_device.volume_size
+    networking:
+      networkId: vpc_id
+      subnetId: subnet_id
+      publicIpEnabled: associate_public_ip_address
+    image:
+      osFamily: ami_os_family_tag
+      osImageReference: ami_id
+    security:
+      adminSshPublicKey: key_pair.public_key
+      diskEncryptionEnabled: root_block_device.encrypted

@@ -1,0 +1,13 @@
+{
+  "request": {
+    "operation": "delete",
+    "requestId": "req-example-0002"
+  },
+  "context": {
+    "requesterIdentity": "svc-example-caller",
+    "correlationId": "corr-example-0002",
+    "buildingBlockVersion": "0.1.0",
+    "resourceId": "i-0123456789abcdef0",
+    "platform": "aws"
+  }
+}

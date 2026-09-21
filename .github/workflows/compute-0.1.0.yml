@@ -1,0 +1,264 @@
+name: Compute IBB
+
+on:
+  workflow_dispatch:
+    inputs:
+      request:
+        description: "A JSON document request matching schemas/compute-input-0.1.0.schema.json"
+        required: true
+      request_id:
+        description: "Optional: request.requestId used to key the concurrency group so duplicate re-runs of the same request serialize instead of racing. If provided, it must match request.requestId or the run fails fast."
+        required: false
+
+concurrency:
+  # Idempotency: serialize re-runs of the same requestId rather than racing duplicate
+  # infrastructure. A concurrency expression is evaluated before any step runs.
+  group: compute-${{ github.event.inputs.request_id || github.event.inputs.request }}
+
+env:
+  IBB_VERSION: "0.1.0" # must match ibb-manifest.yaml metadata.version; checked in stage 3
+
+permissions:
+  id-token: write # required for OIDC federation to AWS (SBP AWS-006)
+  contents: read
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: compute-ibb
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Assign an execution id (distinct from the caller's requestId) for this run.
+      - name: Assign execution id
+        id: exec
+        run: 'echo "execution_id=exec-$(date +%s)-${{ github.run_id }}" >> "$GITHUB_OUTPUT"'
+
+      # 2. Validate the request against the input schema. This is the ONLY structural gate —
+      #    anything the schema can't express (version/platform pinning) is checked in stage 3.
+      - name: Install validator
+        run: pip install check-jsonschema==0.29.*
+
+      - name: Validate request against schema
+        run: |
+          check-jsonschema \
+            --schemafile schemas/compute-input-0.1.0.schema.json \
+            "${{ github.event.inputs.request }}"
+
+      # 3. The two things a shared JSON schema cannot express: pinned IBB version matches this
+      #    pipeline, and the requested platform has an approved implementation in the manifest.
+      #    This step also publishes `operation` for the stages below — it is the step that parses
+      #    the request, so every later `if:` reads steps.pin.outputs.operation rather than
+      #    re-deriving it.
+      - name: Check pinned version and implementation
+        id: pin
+        run: |
+          set -euo pipefail
+          REQ="${{ github.event.inputs.request }}"
+          REQ_ID=$(jq -r '.request.requestId' "$REQ")
+          REQ_OPERATION=$(jq -r '.request.operation' "$REQ")
+          REQ_VERSION=$(jq -r '.context.buildingBlockVersion' "$REQ")
+          REQ_PLATFORM=$(jq -r '.context.platform // empty' "$REQ")
+
+          if [ -n "${{ github.event.inputs.request_id }}" ] && [ "${{ github.event.inputs.request_id }}" != "$REQ_ID" ]; then
+            echo "::error::request_id input (${{ github.event.inputs.request_id }}) does not match request.requestId ($REQ_ID) in $REQ; the concurrency group would be keyed on the wrong request."
+            exit 1
+          fi
+
+          if [ "$REQ_VERSION" != "$IBB_VERSION" ]; then
+            echo "::error::context.buildingBlockVersion ($REQ_VERSION) does not match the pinned pipeline version ($IBB_VERSION)."
+            exit 1
+          fi
+
+          if [ -z "$REQ_PLATFORM" ]; then
+            echo "::error::context.platform is absent from $REQ."
+            exit 1
+          fi
+
+          # .implementations is a mapping keyed by platform, not a list (SKILL.md §6) — this
+          # lookup is what that shape is for.
+          IMPL=$(yq -o=json '.implementations' ibb-manifest.yaml | jq -r --arg p "$REQ_PLATFORM" '.[$p] // empty')
+          if [ -z "$IMPL" ]; then
+            echo "::error::platform '$REQ_PLATFORM' has no implementation declared in ibb-manifest.yaml"
+            exit 1
+          fi
+          echo "platform=$REQ_PLATFORM" >> "$GITHUB_OUTPUT"
+          echo "operation=$REQ_OPERATION" >> "$GITHUB_OUTPUT"
+          echo "resource_id=$(jq -r '.context.resourceId // empty' "$REQ")" >> "$GITHUB_OUTPUT"
+
+      # 4. Authorize requested operation against capability + environment. Only identities in the
+      #    org's platform-engineering automation allow-list may target environment: prd; every
+      #    other environment permits any authenticated requesterIdentity.
+      - name: Authorize operation
+        id: authz
+        run: |
+          set -euo pipefail
+          REQ="${{ github.event.inputs.request }}"
+          ENVIRONMENT=$(jq -r '.context.environment // empty' "$REQ")
+          IDENTITY=$(jq -r '.context.requesterIdentity' "$REQ")
+
+          if [ "$ENVIRONMENT" = "prd" ]; then
+            ALLOWED="${{ vars.COMPUTE_PRD_ALLOWED_IDENTITIES }}"
+            if [ -z "$ALLOWED" ] || ! echo ",$ALLOWED," | grep -q ",$IDENTITY,"; then
+              echo "::error::requesterIdentity '$IDENTITY' is not authorized to target environment 'prd'. Allowed identities are configured in the COMPUTE_PRD_ALLOWED_IDENTITIES repository variable."
+              exit 1
+            fi
+          fi
+
+      # 5. Resolve implementation + map <category>.<property> through ibb-manifest.yaml's
+      #    requirementMapping into Terraform variables (this translation lives inside the IBB,
+      #    never in the consumer request). requirementMapping.<platform> mirrors the same
+      #    category nesting as the request — requirementMapping.<platform>.<category>.<property>.
+      - name: Resolve requirement mapping into IaC vars
+        id: map
+        if: steps.pin.outputs.platform == 'aws'
+        run: |
+          set -euo pipefail
+          REQ="${{ github.event.inputs.request }}"
+          REQ_ID=$(jq -r '.request.requestId' "$REQ")
+          CORRELATION_ID=$(jq -r '.context.correlationId' "$REQ")
+          ENVIRONMENT=$(jq -r '.context.environment // empty' "$REQ")
+          APPLICATION_ID=$(jq -r '.context.applicationId // empty' "$REQ")
+          COST_CENTER=$(jq -r '.context.costCenter // empty' "$REQ")
+
+          cat > iac/0.1.0/aws/terraform.tfvars.json <<EOF
+          {
+            "request_id": "$REQ_ID",
+            "correlation_id": "$CORRELATION_ID",
+            "instance_type": $(jq '.parameters.sizing.computeSize' "$REQ"),
+            "root_volume_size_gib": $(jq '.parameters.sizing.diskSizeGiB' "$REQ"),
+            "vpc_id": $(jq '.parameters.networking.networkId' "$REQ"),
+            "subnet_id": $(jq '.parameters.networking.subnetId' "$REQ"),
+            "associate_public_ip_address": $(jq '.parameters.networking.publicIpEnabled // false' "$REQ"),
+            "ami_os_family": $(jq '.parameters.image.osFamily' "$REQ"),
+            "ami_id": $(jq '.parameters.image.osImageReference' "$REQ"),
+            "admin_ssh_public_key": $(jq '.parameters.security.adminSshPublicKey // null' "$REQ"),
+            "disk_encryption_enabled": $(jq '.parameters.security.diskEncryptionEnabled // true' "$REQ"),
+            "tags": { "Environment": "$ENVIRONMENT", "ApplicationId": "$APPLICATION_ID", "CostCenter": "$COST_CENTER" }
+          }
+          EOF
+
+      # 6. Short-circuit on validate: schema + version/platform + authZ checks above ARE the
+      #    validation for this operation — nothing to provision.
+      - name: Compose validate-only output
+        if: steps.pin.outputs.operation == 'validate'
+        run: |
+          jq -n \
+            --arg reqId "$(jq -r '.request.requestId' "${{ github.event.inputs.request }}")" \
+            --arg execId "${{ steps.exec.outputs.execution_id }}" \
+            '{requestId: $reqId, executionId: $execId, status: "completed"}' > output.json
+
+      # 7. Retrieve scoped execution credentials via OIDC — never a long-lived static credential,
+      #    and never hand privileged credentials to the caller (SBP AWS-006).
+      - name: Retrieve execution credentials (AWS)
+        if: steps.pin.outputs.operation != 'validate' && steps.pin.outputs.platform == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.COMPUTE_AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.COMPUTE_AWS_REGION }}
+
+      # 8-9. Prepare IaC variables/workspace, then run policy-as-code checks PRE-apply.
+      - name: Terraform init/plan
+        if: steps.pin.outputs.operation != 'validate'
+        working-directory: compute-ibb/iac/0.1.0/${{ steps.pin.outputs.platform }}
+        run: |
+          terraform init -input=false
+          if [ "${{ steps.pin.outputs.operation }}" = "delete" ]; then
+            terraform plan -input=false -destroy -var-file=terraform.tfvars.json -out=tfplan
+          else
+            terraform plan -input=false -var-file=terraform.tfvars.json -out=tfplan
+          fi
+          terraform show -json tfplan > tfplan.json
+
+      - name: Policy check (pre-apply)
+        if: steps.pin.outputs.operation != 'validate' && steps.pin.outputs.operation != 'delete'
+        run: |
+          docker run --rm -v "$PWD":/project openpolicyagent/conftest:v0.53.1 test \
+            /project/iac/0.1.0/${{ steps.pin.outputs.platform }}/tfplan.json \
+            --policy /project/policies/${{ steps.pin.outputs.platform }}/
+
+      # 10. Execute IaC.
+      - name: Terraform apply / destroy
+        if: steps.pin.outputs.operation != 'validate'
+        working-directory: compute-ibb/iac/0.1.0/${{ steps.pin.outputs.platform }}
+        run: terraform apply -input=false -auto-approve tfplan
+
+      # 11. Verify deployed state AND Security Blueprint controls against LIVE resources —
+      #     a successful apply is not evidence of conformance.
+      - name: Verify controls (post-apply)
+        if: steps.pin.outputs.operation != 'validate' && steps.pin.outputs.operation != 'delete' && steps.pin.outputs.platform == 'aws'
+        working-directory: compute-ibb/iac/0.1.0/aws
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=$(terraform output -raw resource_id)
+
+          declare -a RESULTS
+
+          IMDS=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].MetadataOptions.HttpTokens' --output text)
+          RESULTS+=("{\"control\":\"AWS-001\",\"result\":\"$([ "$IMDS" = "required" ] && echo passed || echo failed)\",\"detail\":\"HttpTokens=$IMDS\"}")
+
+          ENCRYPTED=$(aws ec2 describe-volumes \
+            --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" \
+            --query 'Volumes[0].Encrypted' --output text)
+          RESULTS+=("{\"control\":\"AWS-002\",\"result\":\"$([ "$ENCRYPTED" = "True" ] && echo passed || echo failed)\",\"detail\":\"Encrypted=$ENCRYPTED\"}")
+
+          PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          REQUESTED_PUBLIC=$(jq -r '.parameters.networking.publicIpEnabled // false' "${{ github.event.inputs.request }}")
+          RESULTS+=("{\"control\":\"AWS-003\",\"result\":\"$([ "$PUBLIC_IP" = "None" ] != [ "$REQUESTED_PUBLIC" = "true" ] && echo passed || echo failed)\",\"detail\":\"PublicIpAddress=$PUBLIC_IP requested=$REQUESTED_PUBLIC\"}")
+
+          MONITORING=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].Monitoring.State' --output text)
+          RESULTS+=("{\"control\":\"AWS-004\",\"result\":\"$([ "$MONITORING" = "enabled" ] && echo passed || echo failed)\",\"detail\":\"Monitoring.State=$MONITORING\"}")
+
+          printf '%s\n' "${RESULTS[@]}" | jq -s '.' > ../../../controls.json
+
+      # 12-13. Compose evidence and the standardized output, propagating context.correlationId.
+      #        status distinguishes completed / partially completed / failed based on control results.
+      - name: Compose evidence and standardized output
+        if: steps.pin.outputs.operation != 'validate'
+        run: |
+          set -euo pipefail
+          REQ="${{ github.event.inputs.request }}"
+          REQ_ID=$(jq -r '.request.requestId' "$REQ")
+          EXEC_ID="${{ steps.exec.outputs.execution_id }}"
+
+          if [ "${{ steps.pin.outputs.operation }}" = "delete" ]; then
+            jq -n --arg reqId "$REQ_ID" --arg execId "$EXEC_ID" \
+              '{requestId: $reqId, executionId: $execId, status: "completed"}' > output.json
+          else
+            RESOURCE_ID=$(terraform -chdir=iac/0.1.0/${{ steps.pin.outputs.platform }} output -raw resource_id)
+            STATE=$(terraform -chdir=iac/0.1.0/${{ steps.pin.outputs.platform }} output -raw operational_state)
+            PRIVATE_IP=$(terraform -chdir=iac/0.1.0/${{ steps.pin.outputs.platform }} output -raw private_ip_address)
+            PUBLIC_IP=$(terraform -chdir=iac/0.1.0/${{ steps.pin.outputs.platform }} output -raw public_ip_address)
+            AZ=$(terraform -chdir=iac/0.1.0/${{ steps.pin.outputs.platform }} output -raw availability_zone)
+
+            FAILED_CONTROLS=$(jq '[.[] | select(.result=="failed")] | length' controls.json 2>/dev/null || echo 0)
+            STATUS=$([ "$FAILED_CONTROLS" = "0" ] && echo "completed" || echo "partially completed")
+            COMPLIANCE_RESULT=$([ "$FAILED_CONTROLS" = "0" ] && echo "passed" || echo "failed")
+
+            jq -n \
+              --arg reqId "$REQ_ID" --arg execId "$EXEC_ID" --arg status "$STATUS" \
+              --arg resourceId "$RESOURCE_ID" --arg state "$STATE" \
+              --arg privateIp "$PRIVATE_IP" --arg publicIp "$PUBLIC_IP" --arg az "$AZ" \
+              --arg complianceResult "$COMPLIANCE_RESULT" --arg evidenceLocation "controls.json" \
+              '{
+                requestId: $reqId, executionId: $execId, status: $status,
+                result: {resourceId: $resourceId, operationalState: $state, privateIpAddress: $privateIp, publicIpAddress: $publicIp, availabilityZone: $az},
+                evidence: {complianceResult: $complianceResult, evidenceLocation: $evidenceLocation}
+              }' > output.json
+          fi
+
+      # 14. Publish standardized outputs as artifacts (success or the shared error contract).
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compute-output-${{ steps.exec.outputs.execution_id }}
+          path: |
+            compute-ibb/output.json
+            compute-ibb/controls.json
+          if-no-files-found: ignore

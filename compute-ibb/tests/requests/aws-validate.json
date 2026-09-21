@@ -1,0 +1,30 @@
+{
+  "request": {
+    "operation": "validate",
+    "requestId": "req-test-0001"
+  },
+  "context": {
+    "requesterIdentity": "svc-test-caller",
+    "correlationId": "corr-test-0001",
+    "buildingBlockVersion": "0.1.0",
+    "applicationId": "app-test-0001",
+    "environment": "dev",
+    "platform": "aws",
+    "costCenter": "cc-1000"
+  },
+  "parameters": {
+    "sizing": {
+      "computeSize": "t3.small",
+      "diskSizeGiB": 8
+    },
+    "networking": {
+      "networkId": "vpc-0123456789abcdef0",
+      "subnetId": "subnet-0123456789abcdef0",
+      "publicIpEnabled": false
+    },
+    "image": {
+      "osFamily": "linux",
+      "osImageReference": "ami-0123456789abcdef0"
+    }
+  }
+}

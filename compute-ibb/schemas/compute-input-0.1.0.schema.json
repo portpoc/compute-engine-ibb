@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "compute-input-0.1.0",
+  "title": "Compute IBB - agnostic input contract",
+  "type": "object",
+  "properties": {
+    "request": {
+      "type": "object",
+      "description": "The operation intent",
+      "required": ["operation", "requestId"],
+      "additionalProperties": false,
+      "properties": {
+        "operation": { "enum": [ "create", "validate", "update", "delete" ] },
+        "requestId": { "type": "string", "pattern": "^req-[A-Za-z0-9._-]{4,}$" }
+      }
+    },
+    "context": {
+      "type": "object",
+      "description": "tracing/environment metadata",
+      "required": ["requesterIdentity", "correlationId"],
+      "additionalProperties": true,
+      "properties": {
+        "requesterIdentity": {
+          "type": "string",
+          "description": "Authenticated caller identity (a non-human identity for automation)."
+        },
+        "correlationId": {
+          "type": "string",
+          "description": "End-to-end traceability across portal, orchestrator, pipeline, IaC, resource."
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "The result.resourceId previously returned by this IBB for the resource being acted on."
+        },
+        "buildingBlockVersion": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "applicationId": {
+          "type": "string",
+          "description": "The DSV applicationId"
+        },
+        "environment": {
+          "type": "string",
+          "enum": ["dev", "tst", "qua", "ppr", "prd"],
+          "description": "The environment from a fixed list"
+        },
+        "platform": {
+          "type": "string",
+          "description": "Cloud provider, one of: aws, azure, gcp, on-prem"
+        },
+        "costCenter": {
+          "type": "string",
+          "description": "The cost center associated with the resource"
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Agnostic, capability-specific knobs",
+      "additionalProperties": true,
+      "properties": {
+        "sizing": {
+          "type": "object",
+          "description": "Compute capacity and disk sizing properties for provisioned resources.",
+          "additionalProperties": false,
+          "properties": {
+            "computeSize": {
+              "type": "string",
+              "description": "Provider-specific compute size/instance type (e.g. AWS EC2 instance type such as `t3.medium`, Azure VM size such as `Standard_D2s_v3`)."
+            },
+            "diskSizeGiB": {
+              "type": "integer",
+              "minimum": 8,
+              "description": "Size, in GiB, of the primary/root disk attached to the compute resource."
+            }
+          }
+        },
+        "networking": {
+          "type": "object",
+          "description": "Network placement and connectivity properties for provisioned resources.",
+          "additionalProperties": false,
+          "properties": {
+            "networkId": {
+              "type": "string",
+              "description": "Identifier of the virtual network the resource is placed into (AWS VPC ID, Azure Virtual Network resource ID)."
+            },
+            "subnetId": {
+              "type": "string",
+              "description": "Identifier of the subnet the resource's primary network interface attaches to."
+            },
+            "publicIpEnabled": {
+              "type": "boolean",
+              "description": "Whether the resource is assigned a public/internet-routable IP address."
+            }
+          }
+        },
+        "image": {
+          "type": "object",
+          "description": "Operating system image/family properties for provisioned compute resources.",
+          "additionalProperties": false,
+          "properties": {
+            "osFamily": {
+              "type": "string",
+              "enum": ["linux", "windows"],
+              "description": "Broad OS family of the image, used to select platform-appropriate defaults (e.g. SSH vs. RDP access, agent bootstrap script)."
+            },
+            "osImageReference": {
+              "type": "string",
+              "description": "Provider-specific image reference (AWS AMI ID, Azure image URN/ID) used to launch the compute resource."
+            }
+          }
+        },
+        "security": {
+          "type": "object",
+          "description": "Access-credential and encryption properties for provisioned resources.",
+          "additionalProperties": false,
+          "properties": {
+            "adminSshPublicKey": {
+              "type": "string",
+              "description": "SSH public key material installed for the resource's administrative/login account (Linux instances)."
+            },
+            "diskEncryptionEnabled": {
+              "type": "boolean",
+              "description": "Whether the resource's attached disks are encrypted at rest using the provider's default or a customer-managed key."
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "request": { "properties": { "operation": { "const": "create" } } } } },
+      "then": {
+        "properties": {
+          "context": { "required": ["requesterIdentity", "correlationId", "buildingBlockVersion", "applicationId", "environment", "platform", "costCenter" ] },
+          "parameters": {
+            "required": ["sizing", "networking", "image"],
+            "properties": {
+              "sizing": { "required": ["computeSize", "diskSizeGiB"] },
+              "networking": { "required": ["networkId", "subnetId"] },
+              "image": { "required": ["osFamily", "osImageReference"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "request": { "properties": { "operation": { "const": "validate" } } } } },
+      "then": {
+        "properties": {
+          "context": { "required": ["requesterIdentity", "correlationId", "buildingBlockVersion", "applicationId", "environment", "platform", "costCenter" ] },
+          "parameters": {
+            "required": ["sizing", "networking", "image"],
+            "properties": {
+              "sizing": { "required": ["computeSize", "diskSizeGiB"] },
+              "networking": { "required": ["networkId", "subnetId"] },
+              "image": { "required": ["osFamily", "osImageReference"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "request": { "properties": { "operation": { "const": "update" } } } } },
+      "then": {
+        "properties": {
+          "context": { "required": ["requesterIdentity", "correlationId", "buildingBlockVersion", "resourceId"] },
+          "parameters": {
+            "required": [],
+            "properties": {}
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "request": { "properties": { "operation": { "const": "delete" } } } } },
+      "then": {
+        "properties": {
+          "context": { "required": ["requesterIdentity", "correlationId", "buildingBlockVersion", "resourceId"] }
+        }
+      }
+    }
+  ]
+}
