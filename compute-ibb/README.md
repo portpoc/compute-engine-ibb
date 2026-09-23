@@ -53,6 +53,7 @@ Network placement and connectivity properties for provisioned resources.
 
 | Parameter | Values | Meaning |
 | :--- | :--- | :--- |
+| `region` | string | Provider region the resource is placed into (AWS region such as `eu-west-1`). |
 | `networkId` | string | Identifier of the virtual network the resource is placed into (AWS VPC ID). |
 | `subnetId` | string | Identifier of the subnet the resource's primary network interface attaches to. |
 | `publicIpEnabled` | boolean | Whether the resource is assigned a public/internet-routable IP address. |
@@ -76,7 +77,9 @@ Access-credential and encryption properties for provisioned resources.
 | `diskEncryptionEnabled` | boolean | Whether the resource's attached disks are encrypted at rest using the provider's default or a customer-managed key. |
 
 All properties above are drawn from the shared [`iac-ibb-dictionary`](ssh://git@bitbucket.dsv.com:7999/transform/iac-ibb-dictionary.git)
-at `master`, already tagged `usedBy: [compute]` — no dictionary changes were needed for this scaffold.
+at `master`, already tagged `usedBy: [compute]`, with one exception: `networking.region` was added
+to the dictionary for this capability via [PR #3](https://bitbucket.dsv.com/projects/TRANSFORM/repos/iac-ibb-dictionary/pull-requests/3)
+and is provisional until that PR merges.
 
 ## Dependencies
 

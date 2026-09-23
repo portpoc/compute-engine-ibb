@@ -48,6 +48,7 @@ requirementMapping:
       computeSize: instance_type
       diskSizeGiB: root_block_device.volume_size
     networking:
+      region: aws-region
       networkId: vpc_id
       subnetId: subnet_id
       publicIpEnabled: associate_public_ip_address

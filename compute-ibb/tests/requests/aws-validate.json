@@ -18,6 +18,7 @@
       "diskSizeGiB": 8
     },
     "networking": {
+      "region": "eu-west-1",
       "networkId": "vpc-0123456789abcdef0",
       "subnetId": "subnet-0123456789abcdef0",
       "publicIpEnabled": false

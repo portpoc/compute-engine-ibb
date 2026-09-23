@@ -25,6 +25,11 @@ variable "root_volume_size_gib" {
 }
 
 # networking.*
+variable "region" {
+  description = "networking.region — AWS region the instance is provisioned into; also used by the pipeline to scope the OIDC-assumed role's STS/API calls."
+  type        = string
+}
+
 variable "vpc_id" {
   description = "networking.networkId — used only to validate subnet_id belongs to it."
   type        = string

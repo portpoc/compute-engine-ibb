@@ -29,7 +29,7 @@ jobs:
       run:
         working-directory: compute-ibb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 0. Persist the request input to a file. The workflow_dispatch `request` input is the JSON
       #    document itself (per its description above), not a repo-relative path, so every
@@ -132,11 +132,14 @@ jobs:
           ENVIRONMENT=$(jq -r '.context.environment // empty' "$REQ")
           APPLICATION_ID=$(jq -r '.context.applicationId // empty' "$REQ")
           COST_CENTER=$(jq -r '.context.costCenter // empty' "$REQ")
+          REGION=$(jq -r '.parameters.networking.region // empty' "$REQ")
+          echo "region=$REGION" >> "$GITHUB_OUTPUT"
 
           cat > iac/0.1.0/aws/terraform.tfvars.json <<EOF
           {
             "request_id": "$REQ_ID",
             "correlation_id": "$CORRELATION_ID",
+            "region": "$REGION",
             "instance_type": $(jq '.parameters.sizing.computeSize' "$REQ"),
             "root_volume_size_gib": $(jq '.parameters.sizing.diskSizeGiB' "$REQ"),
             "vpc_id": $(jq '.parameters.networking.networkId' "$REQ"),
@@ -164,10 +167,10 @@ jobs:
       #    and never hand privileged credentials to the caller (SBP AWS-006).
       - name: Retrieve execution credentials (AWS)
         if: steps.pin.outputs.operation != 'validate' && steps.pin.outputs.platform == 'aws'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.COMPUTE_AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.COMPUTE_AWS_REGION }}
+          aws-region: ${{ steps.map.outputs.region }}
 
       # 8-9. Prepare IaC variables/workspace, then run policy-as-code checks PRE-apply.
       - name: Terraform init/plan
@@ -265,7 +268,7 @@ jobs:
       # 14. Publish standardized outputs as artifacts (success or the shared error contract).
       - name: Upload outputs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compute-output-${{ steps.exec.outputs.execution_id }}
           path: |

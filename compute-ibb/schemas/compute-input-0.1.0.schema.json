@@ -81,6 +81,10 @@
           "description": "Network placement and connectivity properties for provisioned resources.",
           "additionalProperties": false,
           "properties": {
+            "region": {
+              "type": "string",
+              "description": "Provider region the resource is placed into (e.g. AWS region such as `eu-west-1`, Azure region such as `westeurope`)."
+            },
             "networkId": {
               "type": "string",
               "description": "Identifier of the virtual network the resource is placed into (AWS VPC ID, Azure Virtual Network resource ID)."
@@ -139,7 +143,7 @@
             "required": ["sizing", "networking", "image"],
             "properties": {
               "sizing": { "required": ["computeSize", "diskSizeGiB"] },
-              "networking": { "required": ["networkId", "subnetId"] },
+              "networking": { "required": ["region", "networkId", "subnetId"] },
               "image": { "required": ["osFamily", "osImageReference"] }
             }
           }
@@ -155,7 +159,7 @@
             "required": ["sizing", "networking", "image"],
             "properties": {
               "sizing": { "required": ["computeSize", "diskSizeGiB"] },
-              "networking": { "required": ["networkId", "subnetId"] },
+              "networking": { "required": ["region", "networkId", "subnetId"] },
               "image": { "required": ["osFamily", "osImageReference"] }
             }
           }
