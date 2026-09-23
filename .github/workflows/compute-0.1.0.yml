@@ -172,6 +172,13 @@ jobs:
           role-to-assume: ${{ vars.COMPUTE_AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ steps.map.outputs.region }}
 
+      - name: Install Terraform
+        if: steps.pin.outputs.operation != 'validate'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+          terraform_wrapper: false
+
       # 8-9. Prepare IaC variables/workspace, then run policy-as-code checks PRE-apply.
       - name: Terraform init/plan
         if: steps.pin.outputs.operation != 'validate'
