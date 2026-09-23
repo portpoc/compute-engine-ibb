@@ -31,6 +31,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 0. Persist the request input to a file. The workflow_dispatch `request` input is the JSON
+      #    document itself (per its description above), not a repo-relative path, so every
+      #    check-jsonschema/jq call below reads it from this file. Writing it via env: rather than
+      #    interpolating ${{ github.event.inputs.request }} directly into a run: script avoids a
+      #    script-injection vector, since this content is now arbitrary caller-supplied JSON text.
+      - name: Write request to file
+        env:
+          REQUEST_JSON: ${{ github.event.inputs.request }}
+        run: printf '%s' "$REQUEST_JSON" > request.json
+
       # 1. Assign an execution id (distinct from the caller's requestId) for this run.
       - name: Assign execution id
         id: exec
@@ -45,7 +55,7 @@ jobs:
         run: |
           check-jsonschema \
             --schemafile schemas/compute-input-0.1.0.schema.json \
-            "${{ github.event.inputs.request }}"
+            request.json
 
       # 3. The two things a shared JSON schema cannot express: pinned IBB version matches this
       #    pipeline, and the requested platform has an approved implementation in the manifest.
@@ -56,7 +66,7 @@ jobs:
         id: pin
         run: |
           set -euo pipefail
-          REQ="${{ github.event.inputs.request }}"
+          REQ="request.json"
           REQ_ID=$(jq -r '.request.requestId' "$REQ")
           REQ_OPERATION=$(jq -r '.request.operation' "$REQ")
           REQ_VERSION=$(jq -r '.context.buildingBlockVersion' "$REQ")
@@ -95,7 +105,7 @@ jobs:
         id: authz
         run: |
           set -euo pipefail
-          REQ="${{ github.event.inputs.request }}"
+          REQ="request.json"
           ENVIRONMENT=$(jq -r '.context.environment // empty' "$REQ")
           IDENTITY=$(jq -r '.context.requesterIdentity' "$REQ")
 
@@ -116,7 +126,7 @@ jobs:
         if: steps.pin.outputs.platform == 'aws'
         run: |
           set -euo pipefail
-          REQ="${{ github.event.inputs.request }}"
+          REQ="request.json"
           REQ_ID=$(jq -r '.request.requestId' "$REQ")
           CORRELATION_ID=$(jq -r '.context.correlationId' "$REQ")
           ENVIRONMENT=$(jq -r '.context.environment // empty' "$REQ")
@@ -146,7 +156,7 @@ jobs:
         if: steps.pin.outputs.operation == 'validate'
         run: |
           jq -n \
-            --arg reqId "$(jq -r '.request.requestId' "${{ github.event.inputs.request }}")" \
+            --arg reqId "$(jq -r '.request.requestId' request.json)" \
             --arg execId "${{ steps.exec.outputs.execution_id }}" \
             '{requestId: $reqId, executionId: $execId, status: "completed"}' > output.json
 
@@ -207,7 +217,7 @@ jobs:
 
           PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
             --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-          REQUESTED_PUBLIC=$(jq -r '.parameters.networking.publicIpEnabled // false' "${{ github.event.inputs.request }}")
+          REQUESTED_PUBLIC=$(jq -r '.parameters.networking.publicIpEnabled // false' ../../../request.json)
           RESULTS+=("{\"control\":\"AWS-003\",\"result\":\"$([ "$PUBLIC_IP" = "None" ] != [ "$REQUESTED_PUBLIC" = "true" ] && echo passed || echo failed)\",\"detail\":\"PublicIpAddress=$PUBLIC_IP requested=$REQUESTED_PUBLIC\"}")
 
           MONITORING=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
@@ -222,7 +232,7 @@ jobs:
         if: steps.pin.outputs.operation != 'validate'
         run: |
           set -euo pipefail
-          REQ="${{ github.event.inputs.request }}"
+          REQ="request.json"
           REQ_ID=$(jq -r '.request.requestId' "$REQ")
           EXEC_ID="${{ steps.exec.outputs.execution_id }}"
 
