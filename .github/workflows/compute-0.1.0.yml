@@ -149,7 +149,7 @@ jobs:
             "ami_id": $(jq '.parameters.image.osImageReference' "$REQ"),
             "admin_ssh_public_key": $(jq '.parameters.security.adminSshPublicKey // null' "$REQ"),
             "disk_encryption_enabled": $(jq '.parameters.security.diskEncryptionEnabled // true' "$REQ"),
-            "tags": { "Environment": "$ENVIRONMENT", "ApplicationId": "$APPLICATION_ID", "CostCenter": "$COST_CENTER" }
+            "tags": { "environment": "$ENVIRONMENT", "appid": "$APPLICATION_ID", "cost_center": "$COST_CENTER" }
           }
           EOF
 

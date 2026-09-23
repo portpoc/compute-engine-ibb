@@ -50,7 +50,7 @@ resource "aws_instance" "this" {
   }
 
   tags = merge(var.tags, {
-    Name          = "compute-${var.request_id}"
+    name          = "compute-${var.request_id}"
     RequestId     = var.request_id
     CorrelationId = var.correlation_id
     ManagedBy     = "compute-ibb"
