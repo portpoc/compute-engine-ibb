@@ -228,7 +228,13 @@ jobs:
           PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
             --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
           REQUESTED_PUBLIC=$(jq -r '.parameters.networking.publicIpEnabled // false' ../../../request.json)
-          RESULTS+=("{\"control\":\"AWS-003\",\"result\":\"$([ "$PUBLIC_IP" = "None" ] != [ "$REQUESTED_PUBLIC" = "true" ] && echo passed || echo failed)\",\"detail\":\"PublicIpAddress=$PUBLIC_IP requested=$REQUESTED_PUBLIC\"}")
+          # Fails only when a public IP was assigned without having been requested; no public IP
+          # is always compliant regardless of what was requested.
+          AWS_003_RESULT="passed"
+          if [ "$PUBLIC_IP" != "None" ] && [ "$REQUESTED_PUBLIC" != "true" ]; then
+            AWS_003_RESULT="failed"
+          fi
+          RESULTS+=("{\"control\":\"AWS-003\",\"result\":\"$AWS_003_RESULT\",\"detail\":\"PublicIpAddress=$PUBLIC_IP requested=$REQUESTED_PUBLIC\"}")
 
           MONITORING=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
             --query 'Reservations[0].Instances[0].Monitoring.State' --output text)
