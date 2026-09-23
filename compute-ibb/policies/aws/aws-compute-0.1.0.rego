@@ -1,6 +1,6 @@
 package compute.aws
 
-import future.keywords.in
+import rego.v1
 
 # Policy-as-code gate run PRE-apply against the Terraform plan (terraform show -json). Each deny
 # rule cites the Security Blueprint control ID it enforces so the pairing is auditable
@@ -9,7 +9,7 @@ import future.keywords.in
 instances := [rc | rc := input.resource_changes[_]; rc.type == "aws_instance"]
 
 # SBP AWS-001 — IMDSv2 must be enforced; IMDSv1 must be disabled.
-deny[msg] {
+deny contains msg if {
 	instance := instances[_]
 	after := instance.change.after
 	after.metadata_options[0].http_tokens != "required"
@@ -17,7 +17,7 @@ deny[msg] {
 }
 
 # SBP AWS-002 — root volume must be encrypted, regardless of the requested value.
-deny[msg] {
+deny contains msg if {
 	instance := instances[_]
 	after := instance.change.after
 	not after.root_block_device[0].encrypted
@@ -27,7 +27,7 @@ deny[msg] {
 # SBP AWS-003 — no public IP unless explicitly requested; deny when a public IP was NOT
 # requested by the caller but the plan would still associate one (defense in depth against a
 # Terraform module regression, since the module itself already defaults this to false).
-deny[msg] {
+deny contains msg if {
 	instance := instances[_]
 	after := instance.change.after
 	after.associate_public_ip_address == true
@@ -35,12 +35,12 @@ deny[msg] {
 	msg := sprintf("SBP AWS-003: associate_public_ip_address must be false unless networking.publicIpEnabled was requested (%s)", [instance.address])
 }
 
-requested_public_ip = value {
+requested_public_ip := value if {
 	value := input.variables.associate_public_ip_address.value
-} else = false
+} else := false
 
 # SBP AWS-004 — detailed instance monitoring must be enabled.
-deny[msg] {
+deny contains msg if {
 	instance := instances[_]
 	after := instance.change.after
 	after.monitoring != true
@@ -51,7 +51,7 @@ deny[msg] {
 # account, or the public `amazon` / `aws-marketplace` owners.
 approved_ami_owners := {"self", "amazon", "aws-marketplace"}
 
-deny[msg] {
+deny contains msg if {
 	ami := input.resource_changes[_]
 	ami.type == "aws_ami"
 	owner := ami.change.after.owner
